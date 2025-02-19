@@ -32,7 +32,7 @@ def load_pdf(file_path):
     return "".join([page.extract_text() or "" for page in reader.pages])
 
 # Load the knowledge base PDF
-pdf_path = "data/dc_kb.pdf"  # Ensure this file exists
+pdf_path = "dc_kb.pdf"  # Ensure this file exists
 pdf_text = load_pdf(pdf_path)
 
 # Split text into chunks
