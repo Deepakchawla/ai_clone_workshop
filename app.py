@@ -14,99 +14,37 @@ from langchain.schema import HumanMessage, SystemMessage
 from langchain.memory import ConversationBufferMemory
 from sentence_transformers import SentenceTransformer, util
 
-# 🌟 Set up the Streamlit page
-st.set_page_config(page_title="🚀 Chat with Deepak Chawla's AI Clone!", layout="wide")
+# 🔹 Set Page Title
+st.set_page_config(page_title="Deepak Chawla AI Clone - Ask Me Anything", layout="wide")
 
-st.markdown(
-    "<h1 style='text-align: center;'>🤖 Chat with Deepak Chawla's AI Clone!</h1>", 
-    unsafe_allow_html=True
-)
-st.write("💡 **Ask anything about AI, Data Science, or career guidance!**")
+# 🔹 Streamlit App Title
+st.markdown("<h1 style='text-align: center;'>💬 Chat with Deepak Chawla's AI Clone</h1>", unsafe_allow_html=True)
 
-# Initialize conversation memory
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-
-# Load PDF automatically from the data folder
-def load_pdf(file_path):
-    """Extract text from a pre-stored PDF."""
-    if not os.path.exists(file_path):
-        st.error(f"⚠️ PDF file not found: {file_path}")
-        return ""
-    reader = PdfReader(file_path)
-    return "".join([page.extract_text() or "" for page in reader.pages])
-
-# Load the knowledge base PDF
-pdf_path = "dc_kb.pdf"  # Ensure this file exists
-pdf_text = load_pdf(pdf_path)
-
-# Split text into chunks
-if pdf_text.strip():
-    chunk_size = 600
-    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=100)
-    chunks = splitter.split_text(pdf_text)
-    st.write(f"📖 **Knowledge Base Loaded:** {len(chunks)} chunks extracted.")
-else:
-    st.error("⚠️ No text extracted from PDF. Please check the file.")
-
-# Initialize ChromaDB
+# ✅ Initialize ChromaDB
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection(name="ai_knowledge_base")
+collection = chroma_client.get_collection(name="ai_knowledge_base")
 
-# Load embedding model
+# ✅ Load Embedding Model
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Store embeddings in ChromaDB
-existing_docs = set(collection.get().get("documents", []))
-new_chunks = [chunk for chunk in chunks if chunk not in existing_docs]
+# ✅ Initialize Chat Model (Llama3 via Groq)
+chat = ChatGroq(
+    temperature=0.7, 
+    model_name="llama3-70b-8192", 
+    groq_api_key="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"
+)
 
-if new_chunks:
-    embeddings = [embedding_model.embed_query(chunk) for chunk in new_chunks]
-    collection.add(
-        ids=[str(i) for i in range(len(existing_docs), len(existing_docs) + len(new_chunks))],
-        documents=new_chunks,
-        embeddings=embeddings
-    )
-    st.success("✅ Knowledge Base Updated with New Embeddings!")
+# ✅ Initialize Memory for Chat History
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-# Function to retrieve context from ChromaDB
+# ✅ Function to Retrieve Context from ChromaDB
 def retrieve_context(query, top_k=1):
     query_embedding = embedding_model.embed_query(query)
     results = collection.query(query_embeddings=[query_embedding], n_results=top_k)
-    return results.get("documents", [[]])[0] if results else ["No relevant context found."]
+    return results.get("documents", [[]])[0] if results else [""]
 
-# Initialize Groq API for AI responses
-chat = ChatGroq(temperature=0.7, model_name="llama3-70b-8192", groq_api_key="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")
-
-# Streamlit Chat UI (Left: AI, Right: User)
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-chat_container = st.container()
-
-# Display chat history with AI on the left & user on the right
-for message in st.session_state.messages:
-    if message["role"] == "user":
-        with chat_container:
-            col1, col2 = st.columns([1, 5])
-            with col2:
-                st.markdown(f"<div style='text-align: right; color: blue;'>🧑‍💻 **You:** {message['content']}</div>", unsafe_allow_html=True)
-    else:
-        with chat_container:
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                st.markdown(f"<div style='text-align: left; color: green;'>🤖 **Deepak's Clone:** {message['content']}</div>", unsafe_allow_html=True)
-
-# User input field
-user_query = st.chat_input("Ask something about AI, Data Science, or Career...")
-
-if user_query:
-    # Store user query
-    st.session_state.messages.append({"role": "user", "content": user_query})
-
-    # Retrieve context
-    retrieved_context = retrieve_context(user_query)
-
-    # AI system prompt
+# ✅ Function to Handle User Queries
+def query_llama3(user_query):
     system_prompt = """
     System Prompt: you are a ai clone who are the personality minic of the deepak chawla who is a data scientist
 and mentor working as a founde of hidevs who are working to build world's largest gen ai workforce
@@ -125,22 +63,49 @@ Instrunctions:
 7. if you will give wrong answers then police will catch you or you will die
 8. don't answer more than 6 words don't means don't always do the things whatever has been defined
 
-"""
+    """
 
+    # Retrieve Context from ChromaDB
+    retrieved_context = retrieve_context(user_query)
+
+    # Create Message History
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"Context: {retrieved_context}\n\nQuestion: {user_query}")
     ]
 
-    # Generate AI response
-    with st.spinner("Thinking..."):
-        response = chat.invoke(messages).content
+    try:
+        response = chat.invoke(messages)
+        memory.save_context({"input": user_query}, {"output": response.content})
+        return response.content if response else "I don't have an answer for that."
+    except Exception as e:
+        return f"Error: {str(e)}"
 
-    # Store AI response
-    st.session_state.messages.append({"role": "assistant", "content": response})
+# ✅ Streamlit UI for Chat
+st.markdown("<style>div.stTextInput>div>div>input {text-align: right;}</style>", unsafe_allow_html=True)
 
-    # Display AI response
-    with chat_container:
-        col1, col2 = st.columns([5, 1])
-        with col1:
-            st.markdown(f"<div style='text-align: left; color: green;'>🤖 **Deepak's Clone:** {response}</div>", unsafe_allow_html=True)
+# Initialize Chat History in Session State
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# Display Chat Messages
+for message in st.session_state.chat_history:
+    if message["role"] == "user":
+        st.markdown(f"<div style='text-align: right; background-color: #DCF8C6; padding: 10px; border-radius: 10px; margin: 5px;'>"
+                    f"<b>You:</b> {message['content']}</div>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"<div style='text-align: left; background-color: #EAEAEA; padding: 10px; border-radius: 10px; margin: 5px;'>"
+                    f"<b>Deepak's Clone:</b> {message['content']}</div>", unsafe_allow_html=True)
+
+# User Input Field
+user_query = st.text_input("Type your message here and press Enter...", key="user_input")
+
+if user_query:
+    response = query_llama3(user_query)
+
+    # Update Chat History
+    st.session_state.chat_history.append({"role": "user", "content": user_query})
+    st.session_state.chat_history.append({"role": "assistant", "content": response})
+
+    # Refresh UI (Chat History)
+    st.rerun()
