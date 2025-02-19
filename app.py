@@ -1,18 +1,14 @@
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
 import chromadb
 import streamlit as st
-import sys
 import os
-import numpy as np
-from PyPDF2 import PdfReader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from langchain.schema import HumanMessage, SystemMessage
 from langchain.memory import ConversationBufferMemory
-from sentence_transformers import SentenceTransformer, util
 
 # 🔹 Set Page Title
 st.set_page_config(page_title="Deepak Chawla AI Clone - Ask Me Anything", layout="wide")
@@ -35,7 +31,8 @@ chat = ChatGroq(
 )
 
 # ✅ Initialize Memory for Chat History
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
 # ✅ Function to Retrieve Context from ChromaDB
 def retrieve_context(query, top_k=1):
@@ -65,10 +62,8 @@ Instrunctions:
 
     """
 
-    # Retrieve Context from ChromaDB
     retrieved_context = retrieve_context(user_query)
 
-    # Create Message History
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"Context: {retrieved_context}\n\nQuestion: {user_query}")
@@ -76,19 +71,13 @@ Instrunctions:
 
     try:
         response = chat.invoke(messages)
-        memory.save_context({"input": user_query}, {"output": response.content})
         return response.content if response else "I don't have an answer for that."
     except Exception as e:
         return f"Error: {str(e)}"
 
-# ✅ Streamlit UI for Chat
+# ✅ Display Chat Messages
 st.markdown("<style>div.stTextInput>div>div>input {text-align: right;}</style>", unsafe_allow_html=True)
 
-# Initialize Chat History in Session State
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-# Display Chat Messages
 for message in st.session_state.chat_history:
     if message["role"] == "user":
         st.markdown(f"<div style='text-align: right; background-color: #DCF8C6; padding: 10px; border-radius: 10px; margin: 5px;'>"
@@ -97,15 +86,16 @@ for message in st.session_state.chat_history:
         st.markdown(f"<div style='text-align: left; background-color: #EAEAEA; padding: 10px; border-radius: 10px; margin: 5px;'>"
                     f"<b>Deepak's Clone:</b> {message['content']}</div>", unsafe_allow_html=True)
 
-# User Input Field
+# ✅ User Input
 user_query = st.text_input("Type your message here and press Enter...", key="user_input")
 
 if user_query:
-    response = query_llama3(user_query)
+    if len(st.session_state.chat_history) == 0 or st.session_state.chat_history[-1]["content"] != user_query:
+        response = query_llama3(user_query)
+        
+        # Append messages only if they are not duplicate
+        st.session_state.chat_history.append({"role": "user", "content": user_query})
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
 
-    # Update Chat History
-    st.session_state.chat_history.append({"role": "user", "content": user_query})
-    st.session_state.chat_history.append({"role": "assistant", "content": response})
-
-    # Refresh UI (Chat History)
-    st.rerun()
+        # Refresh UI
+        st.rerun()
